@@ -173,18 +173,21 @@ class ShardScheduler:
     load_threshold: int
     pending_queries: Queue[QueryWithReplicas] = field(default_factory=Queue)
     replicas: Dict[str, ShardReplica] = field(default_factory=dict)
-    scheduler_thread: Optional[threading.Thread] = None
+    scheduler_threads: List[threading.Thread] = field(default_factory=list)
+    num_schedulers: int = 1
     shutdown: bool = False
 
     def start_scheduler(self, try_schedule_fn):
         """Start background scheduler thread for this shard"""
-        self.scheduler_thread = threading.Thread(
-            target=self._scheduler_loop,
-            args=(try_schedule_fn,),
-            name=f"Scheduler-Shard-{self.shard_id}"
-        )
-        self.scheduler_thread.daemon = True
-        self.scheduler_thread.start()
+        for i in range(self.num_schedulers):
+            thread = threading.Thread(
+                 target=self._scheduler_loop,
+                 args=(try_schedule_fn,),
+                 name=f"Scheduler-Shard-{self.shard_id}"
+            )
+            thread.daemon = True
+            thread.start()
+            self.scheduler_threads.append(thread)
 
     def _scheduler_loop(self, try_schedule_fn):
         """Background thread that processes pending queries for this shard"""
@@ -218,10 +221,12 @@ class QueryScheduler:
         """Initialize per-shard schedulers"""
         for shard_id, tablets in self.shard_map.items():
             # Create scheduler for this shard
+            num_schedulers = max(8, NODE_COUNT)
             scheduler = ShardScheduler(
                 shard_id=shard_id,
                 max_inflight=self.max_inflight,
-                load_threshold=self.load_threshold
+                load_threshold=self.load_threshold,
+                num_schedulers=num_schedulers
             )
             
             # Initialize replicas for this shard
